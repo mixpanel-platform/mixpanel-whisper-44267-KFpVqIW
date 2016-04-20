@@ -56,43 +56,42 @@
   		}
   	</style>
   	<script id='query'>
-		function theTop(n) {
-		    return function(accumulators, items) {
-		        var count = 0;
-		        var countAdder = function(item) {count += item};
-		        _.chain(items)
-		         .pluck('value')
-		         .each(countAdder);
-		        _.chain(accumulators)
-		         .pluck('count')
-		         .each(countAdder);
-		        return {results: _.pluck(accumulators, 'results')
-		                          .reduce(function(a,b) {return a.concat(b);}, [])
-		                          .concat(items)
-		                          .sort(function(a, b) {return b.value - a.value;})
-		                          .slice(0, n),
-		                count: count};
-		    };
-		}                                                        
-
-		function main() {
-		  return Events({
-		    from_date: params.from_date,
-		    to_date: params.to_date,
-		  })
-		  .groupBy(['name'], mixpanel.reducer.count())
-		  .reduce(theTop(params.num_results))
-		  .map(function(item) {
-		      _.each(item.results, function(summary) {
-		          summary.Percentage = Math.round(summary.value * 1000 / item.count) / 10;
-		          summary['Event Name'] = summary.key[0];
-		          summary.Count = summary.value;
-		          delete summary.value;
-		          delete summary.key;
-		      });
-		      return item;
-		  });
-		}
+function main() {
+  return Events({
+    from_date: params.from_date,
+    to_date: params.to_date,
+  })
+  .groupBy(['name'], mixpanel.reducer.count())
+  .reduce(function(accums, items) {
+    var results = {};
+    results.events = [];
+    _.each(accums, function(accum) {
+      results.events = _.union(accum.events, results.events);
+      results.count = results.count + accum.count || accum.count;
+    });
+    _.each(items, function(item) {
+      results.count = results.count || 0;
+      results.count += item.value;
+      results.events.push({event_name: item.key[0], count: item.value});
+    });
+    return results;
+  })
+  .map(function(item) {
+    var r = {};
+    r.results = _.chain(item.events)
+                .map(function(i) {
+                  var obj = {};
+                  obj['Event Name'] = i.event_name;
+                  obj.Count = i.count;
+                  obj.Percentage = Math.round(1000 * i.count / item.count) / 10;
+                  return obj;
+                })
+                .sortBy(i => -1 * i.Count)
+                .value();
+    r.count = item.count;
+    return r;
+  });
+}
   	</script>
   	<div class="mixpanel-platform-section" style='width:919px'>
   	  <div class="header" style="display:flex;justify-content:center;align-items:center;width:919px;">Most Common Events</div>
@@ -100,10 +99,6 @@
   	  	<div class="select left">
       		<div class="dropdown-label">Date range:</div>
       		<div id="dateSelect"></div>
-      	</div>
-      	<div class="select right">
-      		<div class="dropdown-label">Number of results to show:</div>
-      		<div id="numResultsSelect"></div>
       	</div>
       </div>
     </div>
@@ -113,8 +108,6 @@
 		var eventTable = $('#table').MPTable({showPercentages: false, firstColHeader: 'Event'});
 		var dateSelect = $('#dateSelect').MPDatepicker();
 		var items = function() {return item_list = _.map(arguments, function(item) {return {label: String(item), value: item};})};
-		var max_results = $('#numResultsSelect').MPSelect({items: items(5, 10, 15, 25, 50)});
-    max_results.val(25);
 		function runQuery() {
       MP.api.query('api/2.0/events/list_deleted', {limit: 255}).done(function(hidden_events) {
   			$('.select_button:not(#eventSelect > .select_button, #propSelect > .select_button, #startEventSelect > .select_button, #peoplePropSelect > .select_button)').addClass('small');
@@ -123,7 +116,6 @@
   			var params = {
   			    'from_date': dateSelect.MPDatepicker('value').from.toISOString().slice(0, -14),
   			    'to_date': dateSelect.MPDatepicker('value').to.toISOString().slice(0, -14),
-  			    'num_results': max_results.MPSelect('value'),
   			};
   			MP.api.custom_query(script, params).done(function(results) {
   				var res = [];
@@ -134,7 +126,6 @@
           _.each(res, function(item) {
             var event_name = !_.contains(hidden_events, item['Event Name'])? item['Event Name'] : item['Event Name'] + ' (HIDDEN)';
             r[event_name] = item;
-            //debugger;
             delete r[event_name]['Event Name'];
           })
   			  eventTable.MPTable('setData', r);
@@ -143,7 +134,6 @@
 		}
 		runQuery();
 		dateSelect.on('change', function() {runQuery();});
-		max_results.on('change', function(e, selection) {runQuery();});
     </script>
   </body>
 </html>
